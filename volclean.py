@@ -25,8 +25,8 @@ def main(argv):
                    dest='pool_size', default=10, type=int)
     args = p.parse_args(argv)
 
-    volclean = VolumeCleaner(args)
-    volclean.run()
+    vol_clean = VolumeCleaner(args)
+    vol_clean.run()
 
 
 class VolumeCleaner:
@@ -37,7 +37,8 @@ class VolumeCleaner:
     def run(self):
         p = ThreadPool(self.args.pool_size)
         candidates = list(filter(None, p.map(self.candidate, self.available_volumes())))
-        if self.args.all_yes or query_yes_no('Do you want to remove {} Volumes?'.format(len(candidates))):
+        if len(candidates) > 0 \
+                and (self.args.all_yes or query_yes_no('Do you want to remove {} Volumes?'.format(len(candidates)))):
             self.log.info('Removing {} Volumes in Region {}'.format(len(candidates), self.args.region))
             p.map(self.remove_volume, candidates)
             self.log.info('Done')
@@ -45,13 +46,13 @@ class VolumeCleaner:
             self.log.info('Not doing anything')
 
     def available_volumes(self):
-        self.log.debug('Finding available Volumes in Region {}'.format(self.args.region))
+        self.log.debug('Finding unused Volumes in Region {}'.format(self.args.region))
         session = boto3.session.Session(aws_access_key_id=self.args.access_key_id,
                                         aws_secret_access_key=self.args.secret_access_key,
                                         region_name=self.args.region)
         ec2 = session.resource('ec2')
         volumes = ec2.volumes.filter(Filters=[{'Name': 'status', 'Values': ['available']}])
-        self.log.info('Found {} available Volumes'.format(len(list(volumes))))
+        self.log.info('Found {} unused Volumes'.format(len(list(volumes))))
         return volumes
 
     # based on http://blog.ranman.org/cleaning-up-aws-with-boto3/
@@ -100,15 +101,6 @@ class VolumeCleaner:
 
 # From http://stackoverflow.com/questions/3041986/apt-command-line-interface-like-yes-no-input
 def query_yes_no(question, default='no'):
-    """Ask a yes/no question via raw_input() and return their answer.
-
-    "question" is a string that is presented to the user.
-    "default" is the presumed answer if the user just hits <Enter>.
-        It must be "yes" (the default), "no" or None (meaning
-        an answer is required of the user).
-
-    The "answer" return value is True for "yes" or False for "no".
-    """
     valid = {"yes": True, "y": True, "ye": True,
              "no": False, "n": False}
     if default is None:
