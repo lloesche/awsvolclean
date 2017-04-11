@@ -18,38 +18,55 @@ def main(argv):
     p = argparse.ArgumentParser(description='Generate AWS IAM User Report')
     p.add_argument('--access-key-id', '-k', help='AWS Access Key ID', dest='access_key_id')
     p.add_argument('--secret-access-key', '-s', help='AWS Secret Access Key', dest='secret_access_key')
-    p.add_argument('--region', '-r', help='AWS Region', dest='region', required=True)
+    p.add_argument('--region', '-r', help='AWS Region (default: all)', dest='region', type=str, default=None,
+                   nargs='+')
     p.add_argument('--run-dont-ask', help='Assume YES to all questions', action='store_true', default=False,
                    dest='all_yes')
     p.add_argument('--pool-size', '-p', help='Thread Pool Size - how many AWS API requests we do in parallel',
                    dest='pool_size', default=10, type=int)
     args = p.parse_args(argv)
 
-    vol_clean = VolumeCleaner(args)
-    vol_clean.run()
+    if not args.region:
+        log.info('Region not specified, assuming all regions')
+        regions = all_regions(args)
+    else:
+        regions = args.region
+
+    for region in regions:
+        vol_clean = VolumeCleaner(args, region=region)
+        vol_clean.run()
+
+
+def all_regions(args):
+    session = boto3.session.Session(aws_access_key_id=args.access_key_id,
+                                    aws_secret_access_key=args.secret_access_key)
+    ec2 = session.client('ec2', region_name='us-west-2')
+    regions = ec2.describe_regions()
+    return [r['RegionName'] for r in regions['Regions']]
 
 
 class VolumeCleaner:
-    def __init__(self, args):
+    def __init__(self, args, region):
         self.args = args
         self.log = logging.getLogger(__name__)
+        self.region = region
 
     def run(self):
         p = ThreadPool(self.args.pool_size)
         candidates = list(filter(None, p.map(self.candidate, self.available_volumes())))
         if len(candidates) > 0 \
                 and (self.args.all_yes or query_yes_no('Do you want to remove {} Volumes?'.format(len(candidates)))):
-            self.log.info('Removing {} Volumes in Region {}'.format(len(candidates), self.args.region))
+            self.log.info('Removing {} Volumes in Region {}'.format(len(candidates), self.region))
             p.map(self.remove_volume, candidates)
             self.log.info('Done')
         else:
             self.log.info('Not doing anything')
 
     def available_volumes(self):
-        self.log.debug('Finding unused Volumes in Region {}'.format(self.args.region))
+        self.log.debug('Finding unused Volumes in Region {}'.format(self.region))
         session = boto3.session.Session(aws_access_key_id=self.args.access_key_id,
                                         aws_secret_access_key=self.args.secret_access_key,
-                                        region_name=self.args.region)
+                                        region_name=self.region)
         ec2 = session.resource('ec2')
         volumes = ec2.volumes.filter(Filters=[{'Name': 'status', 'Values': ['available']}])
         self.log.info('Found {} unused Volumes'.format(len(list(volumes))))
@@ -60,7 +77,7 @@ class VolumeCleaner:
         self.log.debug('Retrieving Metrics for Volume {}'.format(volume.volume_id))
         session = boto3.session.Session(aws_access_key_id=self.args.access_key_id,
                                         aws_secret_access_key=self.args.secret_access_key,
-                                        region_name=self.args.region)
+                                        region_name=self.region)
         cw = session.client('cloudwatch')
 
         end_time = datetime.now() + timedelta(days=1)
@@ -92,7 +109,7 @@ class VolumeCleaner:
         if thread_safe:
             session = boto3.session.Session(aws_access_key_id=self.args.access_key_id,
                                             aws_secret_access_key=self.args.secret_access_key,
-                                            region_name=self.args.region)
+                                            region_name=self.region)
             ec2 = session.resource('ec2')
             volume = ec2.Volume(volume.volume_id)
 
