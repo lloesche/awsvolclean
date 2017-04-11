@@ -114,7 +114,7 @@ class VolumeCleaner:
         self.log.debug('Volume {} is a candidate for deletion'.format(volume.volume_id))
         return volume
 
-    @retry(stop_max_attempt_number=30, wait_exponential_multiplier=1000, wait_exponential_max=30000,
+    @retry(stop_max_attempt_number=100, wait_exponential_multiplier=1000, wait_exponential_max=30000,
            retry_on_exception=retry_on_request_limit_exceeded)
     def remove_volume(self, volume, thread_safe=True):
         self.log.debug('Removing Volume {}'.format(volume.volume_id))
