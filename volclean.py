@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 import boto3
 import boto3.session
+import botocore.exceptions
 from datetime import datetime, timedelta
 import sys
 import argparse
 import logging
 from multiprocessing.pool import ThreadPool
 from pprint import pprint
+from retrying import retry
 
 logging.basicConfig(level=logging.WARN, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.getLogger('__main__').setLevel(logging.DEBUG)
@@ -43,6 +45,14 @@ def all_regions(args):
     ec2 = session.client('ec2', region_name='us-west-2')
     regions = ec2.describe_regions()
     return [r['RegionName'] for r in regions['Regions']]
+
+
+def retry_on_request_limit_exceeded(e):
+    if isinstance(e, botocore.exceptions.ClientError):
+        if e.response['Error']['Code'] == 'RequestLimitExceeded':
+            log.debug('AWS API request limit exceeded, retrying with exponential backoff')
+            return True
+    return False
 
 
 class VolumeCleaner:
@@ -104,6 +114,8 @@ class VolumeCleaner:
         self.log.debug('Volume {} is a candidate for deletion'.format(volume.volume_id))
         return volume
 
+    @retry(stop_max_attempt_number=30, wait_exponential_multiplier=1000, wait_exponential_max=30000,
+           retry_on_exception=retry_on_request_limit_exceeded)
     def remove_volume(self, volume, thread_safe=True):
         self.log.debug('Removing Volume {}'.format(volume.volume_id))
         if thread_safe:
