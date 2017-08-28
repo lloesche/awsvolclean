@@ -7,6 +7,7 @@ import sys
 import re
 import argparse
 import logging
+import json
 from multiprocessing.pool import ThreadPool
 from pprint import pprint
 from retrying import retry
@@ -34,6 +35,8 @@ def main(argv):
                    dest='tags', type=str, default=None, nargs='+')
     p.add_argument('--ignore-metrics', '-i', help='Ignore Volume Metrics - remove all detached Volumes',
                    dest='ignore_metrics', action='store_true', default=False)
+    p.add_argument('--reportfile', '-rf', help='Filename for JSON report of removed volumes', dest='report_filename',
+                   type=str, default=None)
     p.add_argument('--verbose', '-v', help='Verbose logging', dest='verbose', action='store_true', default=False)
     args = p.parse_args(argv)
 
@@ -47,10 +50,16 @@ def main(argv):
     else:
         regions = args.region
 
+    report_data = {}
     for region in regions:
         vol_clean = VolumeCleaner(args, region=region)
         vol_clean.run()
+        report_data[region] = vol_clean.removal_log
 
+    if args.report_filename:
+        log.debug('Writing removal report to {}'.format(args.report_filename))
+        with open(args.report_filename, 'w') as report_file:
+            json.dump(report_data, report_file, sort_keys=True, indent=4)
 
 def check_positive(value):
     ivalue = int(value)
@@ -80,6 +89,7 @@ class VolumeCleaner:
         self.args = args
         self.log = logging.getLogger(__name__)
         self.region = region
+        self.removal_log = []
 
     @retry(stop_max_attempt_number=30, wait_exponential_multiplier=3000, wait_exponential_max=120000,
            retry_on_exception=retry_on_request_limit_exceeded)
@@ -177,8 +187,15 @@ class VolumeCleaner:
             ec2 = session.resource('ec2')
             volume = ec2.Volume(volume.volume_id)
 
-        self.log.debug('Removing Volume {} with size {} GiB created on {}'.format(volume.volume_id, volume.size, volume.create_time))
+        self.log.debug('Removing Volume {} with size {} GiB created on {}'.format(volume.volume_id, volume.size,
+                                                                                  volume.create_time))
+        removal_log_record = {'volume_id': volume.volume_id,
+                              'volume_type': volume.volume_type,
+                              'size': volume.size,
+                              'create_time': str(volume.create_time),
+                              'removal_time': '{}+00:00'.format(datetime.utcnow())}
         volume.delete()
+        self.removal_log.append(removal_log_record)
 
 
 # From http://stackoverflow.com/questions/3041986/apt-command-line-interface-like-yes-no-input
