@@ -170,7 +170,6 @@ class VolumeCleaner:
     @retry(stop_max_attempt_number=100, wait_exponential_multiplier=1000, wait_exponential_max=30000,
            retry_on_exception=retry_on_request_limit_exceeded)
     def remove_volume(self, volume, thread_safe=True):
-        self.log.debug('Removing Volume {}'.format(volume.volume_id))
         if thread_safe:
             session = boto3.session.Session(aws_access_key_id=self.args.access_key_id,
                                             aws_secret_access_key=self.args.secret_access_key,
@@ -178,6 +177,7 @@ class VolumeCleaner:
             ec2 = session.resource('ec2')
             volume = ec2.Volume(volume.volume_id)
 
+        self.log.debug('Removing Volume {} with size {} GiB created on {}'.format(volume.volume_id, volume.size, volume.create_time))
         volume.delete()
 
 
