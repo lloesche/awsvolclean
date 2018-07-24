@@ -8,6 +8,7 @@ import re
 import argparse
 import logging
 import json
+import uuid
 from multiprocessing.pool import ThreadPool
 from pprint import pprint
 from retrying import retry
@@ -22,6 +23,8 @@ def main(argv):
     p = argparse.ArgumentParser(description='Remove unused EBS volumes')
     p.add_argument('--access-key-id', '-k', help='AWS Access Key ID', dest='access_key_id')
     p.add_argument('--secret-access-key', '-s', help='AWS Secret Access Key', dest='secret_access_key')
+    p.add_argument('--role', help='AWS IAM role', dest='role')
+    p.add_argument('--account', help='AWS account', dest='account')
     p.add_argument('--region', '-r', help='AWS Region (default: all)', dest='region', type=str, default=None,
                    nargs='+')
     p.add_argument('--run-dont-ask', '-y', help='Assume YES to all questions', action='store_true', default=False,
@@ -61,6 +64,7 @@ def main(argv):
         with open(args.report_filename, 'w') as report_file:
             json.dump(report_data, report_file, sort_keys=True, indent=4)
 
+
 def check_positive(value):
     ivalue = int(value)
     if ivalue <= 0:
@@ -69,9 +73,8 @@ def check_positive(value):
 
 
 def all_regions(args):
-    session = boto3.session.Session(aws_access_key_id=args.access_key_id,
-                                    aws_secret_access_key=args.secret_access_key)
-    ec2 = session.client('ec2', region_name='us-west-2')
+    session = boto3_session(args)
+    ec2 = session.client('ec2', region_name='us-east-1')
     regions = ec2.describe_regions()
     return [r['RegionName'] for r in regions['Regions']]
 
@@ -82,6 +85,23 @@ def retry_on_request_limit_exceeded(e):
             log.debug('AWS API request limit exceeded, retrying with exponential backoff')
             return True
     return False
+
+
+def boto3_session(args):
+    if args.role and args.account:
+        role_arn = 'arn:aws:iam::{}:role/{}'.format(args.account, args.role)
+        session = boto3.session.Session(aws_access_key_id=args.access_key_id,
+                                        aws_secret_access_key=args.secret_access_key,
+                                        region_name='us-east-1')
+        sts = session.client('sts')
+        token = sts.assume_role(RoleArn=role_arn, RoleSessionName='{}-{}'.format(args.account, str(uuid.uuid4())))
+        credentials = token["Credentials"]
+        return boto3.session.Session(aws_access_key_id=credentials["AccessKeyId"],
+                                     aws_secret_access_key=credentials["SecretAccessKey"],
+                                     aws_session_token=credentials["SessionToken"])
+    else:
+        return boto3.session.Session(aws_access_key_id=args.access_key_id,
+                                     aws_secret_access_key=args.secret_access_key)
 
 
 class VolumeCleaner:
@@ -106,10 +126,8 @@ class VolumeCleaner:
 
     def available_volumes(self):
         self.log.debug('Finding unused Volumes in Region {}'.format(self.region))
-        session = boto3.session.Session(aws_access_key_id=self.args.access_key_id,
-                                        aws_secret_access_key=self.args.secret_access_key,
-                                        region_name=self.region)
-        ec2 = session.resource('ec2')
+        session = boto3_session(self.args)
+        ec2 = session.resource('ec2', region_name=self.region)
         volumes = ec2.volumes.filter(Filters=[{'Name': 'status', 'Values': ['available']}])
         self.log.debug('Found {} unused Volumes in Region {}'.format(len(list(volumes)), self.region))
         return volumes
@@ -117,10 +135,8 @@ class VolumeCleaner:
     # based on http://blog.ranman.org/cleaning-up-aws-with-boto3/
     def get_metrics(self, volume):
         self.log.debug('Retrieving Metrics for Volume {}'.format(volume.volume_id))
-        session = boto3.session.Session(aws_access_key_id=self.args.access_key_id,
-                                        aws_secret_access_key=self.args.secret_access_key,
-                                        region_name=self.region)
-        cw = session.client('cloudwatch')
+        session = boto3_session(self.args)
+        cw = session.client('cloudwatch', region_name=self.region)
 
         end_time = datetime.now() + timedelta(days=1)
         start_time = end_time - timedelta(days=self.args.age)
@@ -181,10 +197,8 @@ class VolumeCleaner:
            retry_on_exception=retry_on_request_limit_exceeded)
     def remove_volume(self, volume, thread_safe=True):
         if thread_safe:
-            session = boto3.session.Session(aws_access_key_id=self.args.access_key_id,
-                                            aws_secret_access_key=self.args.secret_access_key,
-                                            region_name=self.region)
-            ec2 = session.resource('ec2')
+            session = boto3_session(self.args)
+            ec2 = session.resource('ec2', region_name=self.region)
             volume = ec2.Volume(volume.volume_id)
 
         self.log.debug('Removing Volume {} with size {} GiB created on {}'.format(volume.volume_id, volume.size,
