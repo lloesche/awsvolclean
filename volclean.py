@@ -55,9 +55,15 @@ def main(argv):
 
     report_data = {}
     for region in regions:
-        vol_clean = VolumeCleaner(args, region=region)
-        vol_clean.run()
-        report_data[region] = vol_clean.removal_log
+        try:
+            vol_clean = VolumeCleaner(args, region=region)
+            vol_clean.run()
+            report_data[region] = vol_clean.removal_log
+        except botocore.exceptions.ClientError as e:
+            if e.response['Error']['Code'] == 'UnauthorizedOperation':
+                log.error('Not authorized to collect resources in region {}'.format(region))
+            else:
+                raise
 
     if args.report_filename:
         log.debug('Writing removal report to {}'.format(args.report_filename))
@@ -115,11 +121,20 @@ class VolumeCleaner:
            retry_on_exception=retry_on_request_limit_exceeded)
     def run(self):
         p = ThreadPool(self.args.pool_size)
-        candidates = list(filter(None, p.map(self.candidate, self.available_volumes())))
+        try:
+            candidates = list(filter(None, p.map(self.candidate, self.available_volumes())))
+        finally:
+            p.close()
+            p.join()
         if len(candidates) > 0 and (self.args.all_yes or query_yes_no(
                 'Do you want to remove {} Volumes in Region {}?'.format(len(candidates), self.region))):
             self.log.info('Removing {} Volumes in Region {}'.format(len(candidates), self.region))
-            p.map(self.remove_volume, candidates)
+            p = ThreadPool(self.args.pool_size)
+            try:
+                p.map(self.remove_volume, candidates)
+            finally:
+                p.close()
+                p.join()
             self.log.info('Done')
         else:
             self.log.info('Not doing anything in Region {}'.format(self.region))
