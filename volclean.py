@@ -78,7 +78,9 @@ def main(argv):
                     report_data[account.account_id][region] = vol_clean.removal_log
                 except botocore.exceptions.ClientError as e:
                     if e.response['Error']['Code'] == 'UnauthorizedOperation':
-                        log.error('Not authorized to collect resources in region {}'.format(region))
+                        log.error(
+                            'Not authorized to collect resources in account {} region {}'.format(account.account_id,
+                                                                                                 region))
                     else:
                         raise
         except botocore.exceptions.ClientError as e:
