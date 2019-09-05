@@ -69,17 +69,23 @@ def main(argv):
 
     report_data = {}
     for account in accounts:
-        report_data[account.account_id] = {}
-        for region in regions:
-            try:
-                vol_clean = VolumeCleaner(args, account=account, region=region)
-                vol_clean.run()
-                report_data[account.account_id][region] = vol_clean.removal_log
-            except botocore.exceptions.ClientError as e:
-                if e.response['Error']['Code'] in ('UnauthorizedOperation', 'AccessDenied'):
-                    log.error('Not authorized to collect resources in region {}'.format(region))
-                else:
-                    raise
+        try:
+            report_data[account.account_id] = {}
+            for region in regions:
+                try:
+                    vol_clean = VolumeCleaner(args, account=account, region=region)
+                    vol_clean.run()
+                    report_data[account.account_id][region] = vol_clean.removal_log
+                except botocore.exceptions.ClientError as e:
+                    if e.response['Error']['Code'] == 'UnauthorizedOperation':
+                        log.error('Not authorized to collect resources in region {}'.format(region))
+                    else:
+                        raise
+        except botocore.exceptions.ClientError as e:
+            if e.response['Error']['Code'] == 'AccessDenied':
+                log.error('Not authorized to collect resources in account {}'.format(account.account_id))
+            else:
+                raise
 
     if args.report_filename:
         log.debug('Writing removal report to {}'.format(args.report_filename))
