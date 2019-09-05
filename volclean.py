@@ -76,7 +76,7 @@ def main(argv):
                 vol_clean.run()
                 report_data[account.account_id][region] = vol_clean.removal_log
             except botocore.exceptions.ClientError as e:
-                if e.response['Error']['Code'] == 'UnauthorizedOperation':
+                if e.response['Error']['Code'] in ('UnauthorizedOperation', 'AccessDenied'):
                     log.error('Not authorized to collect resources in region {}'.format(region))
                 else:
                     raise
