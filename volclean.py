@@ -2,7 +2,7 @@
 import boto3
 import boto3.session
 import botocore.exceptions
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 import re
 import argparse
@@ -228,10 +228,19 @@ class VolumeCleaner:
 
         metrics = self.get_metrics(volume)
         if len(metrics['Datapoints']) == 0:
-            self.log.debug('Volume {} in Account {} Region {} has no metrics yet and is no candidate for deletion'.format(volume.volume_id,
-                                                                                                    self.account,
-                                                                                                    self.region))
-            return None
+            now = datetime.utcnow().replace(tzinfo=timezone.utc)
+            expire = volume.create_time + timedelta(days=self.args.age)
+            if now >= expire:
+                self.log.debug('Volume {} in Account {} Region {} has no metrics yet but is older than {} days, so is a candidate for deletion'.format(volume.volume_id,
+                                                                                                        self.account,
+                                                                                                        self.region,
+                                                                                                        self.args.age))
+                return volume
+            else:
+                self.log.debug('Volume {} in Account {} Region {} has no metrics yet and is no candidate for deletion'.format(volume.volume_id,
+                                                                                                        self.account,
+                                                                                                        self.region))
+                return None
 
         for metric in metrics['Datapoints']:
             if metric['Minimum'] < 299:
