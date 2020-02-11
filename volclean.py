@@ -227,6 +227,12 @@ class VolumeCleaner:
             return volume
 
         metrics = self.get_metrics(volume)
+        if len(metrics['Datapoints']) == 0:
+            self.log.debug('Volume {} in Account {} Region {} has no metrics yet and is no candidate for deletion'.format(volume.volume_id,
+                                                                                                    self.account,
+                                                                                                    self.region))
+            return None
+
         for metric in metrics['Datapoints']:
             if metric['Minimum'] < 299:
                 self.log.debug('Volume {} in Account {} Region {} is no candidate for deletion'.format(volume.volume_id,
